@@ -7,9 +7,11 @@ export interface FileNode {
   path: string;
   size: number;
   complexity: number;
+  category: string;  // Make category required
   dependencies: string[];
+  imports: string[];  // Add explicit imports
+  exports: string[];  // Add explicit exports
   children?: FileNode[];
-  category?: string;
 }
 
 interface CodebaseState {

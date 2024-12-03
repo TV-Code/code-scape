@@ -1,108 +1,142 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Line, Sphere } from "@react-three/drei";
-import { Color, Vector3 } from "three";
-import { FileNode } from "@/lib/project-analyzer";
+import { useState, useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
+import { Color, Vector3, CatmullRomCurve3, Mesh, TubeGeometry } from "three";
+import { CustomLineMaterial } from "../materials/custom-shader";
 
 interface DependencyLinesProps {
-  nodes: Map<string, { position: [number, number, number]; node: FileNode }>;
-  highlightedNode?: string;
+  start: Vector3;
+  end: Vector3;
+  isHighlighted?: boolean;
+  importType?: string;
+  relationshipStrength?: number;
+  isBidirectional?: boolean;
+  isCircularDependency?: boolean;
+  onHover?: (hovering: boolean) => void;
 }
 
-export function DependencyLines({ nodes, highlightedNode }: DependencyLinesProps) {
-  const [hoveredLine, setHoveredLine] = useState<string | null>(null);
+export function DependencyLines({
+  start,
+  end,
+  isHighlighted = false,
+  importType = 'default',
+  relationshipStrength = 1,
+  isBidirectional = false,
+  isCircularDependency = false,
+  onHover
+}: DependencyLinesProps) {
+  const [isHovered, setHovered] = useState(false);
+  const tubeRef = useRef<Mesh>(null);
+  const materialRef = useRef<CustomLineMaterial>();
 
-  const dependencies = useMemo(() => {
-    const deps: Array<{
-      from: Vector3;
-      to: Vector3;
-      strength: number;
-      id: string;
-      fromNode: FileNode;
-      toNode: FileNode;
-    }> = [];
+  // Create curve and geometry
+  const { curve, tubeGeometry, middlePoint } = useMemo(() => {
+    const distance = start.distanceTo(end);
+    const midPoint = new Vector3().addVectors(start, end).multiplyScalar(0.5);
+    
+    // Add height to the curve based on distance
+    const curveHeight = distance * 0.3;
+    const sideOffset = distance * 0.15;
+    
+    // Create control points for a more natural curve
+    const controlPoints = [
+      start,
+      new Vector3().copy(start).lerp(midPoint, 0.25).add(new Vector3(
+        Math.random() * sideOffset,
+        curveHeight,
+        Math.random() * sideOffset
+      )),
+      new Vector3().copy(midPoint).add(new Vector3(
+        0,
+        curveHeight * 1.2,
+        0
+      )),
+      new Vector3().copy(end).lerp(midPoint, 0.25).add(new Vector3(
+        -Math.random() * sideOffset,
+        curveHeight,
+        -Math.random() * sideOffset
+      )),
+      end
+    ];
 
-    nodes.forEach(({ position: fromPos, node: fromNode }) => {
-      fromNode.imports.forEach((imp) => {
-        // Find the target node based on the import path
-        const toNodeEntry = Array.from(nodes.entries()).find(([_, { node }]) => 
-          node.path.includes(imp) || imp.includes(node.name)
-        );
+    const curve = new CatmullRomCurve3(controlPoints);
+    
+    // Create tube geometry with size based on relationship strength
+    const tubeGeometry = new TubeGeometry(
+      curve,
+      64, // tubular segments
+      0.02 * (1 + relationshipStrength * 0.5), // tube radius
+      8,  // radial segments
+      false // closed
+    );
 
-        if (toNodeEntry) {
-          const [toId, { position: toPos, node: toNode }] = toNodeEntry;
-          deps.push({
-            from: new Vector3(...fromPos),
-            to: new Vector3(...toPos),
-            strength: 1,
-            id: `${fromNode.id}-${toId}`,
-            fromNode,
-            toNode
-          });
-        }
-      });
-    });
+    return { curve, tubeGeometry, middlePoint: midPoint };
+  }, [start, end, relationshipStrength]);
 
-    return deps;
-  }, [nodes]);
+  // Create material instance
+  const material = useMemo(() => {
+    const mat = new CustomLineMaterial();
+    mat.color = new Color(isCircularDependency ? "#ff0000" : "#4d4dff");
+    return mat;
+  }, [isCircularDependency]);
+
+  // Animate material
+  useFrame((state) => {
+    if (materialRef.current) {
+      materialRef.current.time = state.clock.elapsedTime;
+      materialRef.current.flowSpeed = isHighlighted || isHovered ? 2 : 1;
+      materialRef.current.flowIntensity = isHighlighted || isHovered ? 0.8 : 0.4;
+      materialRef.current.opacity = isHighlighted || isHovered ? 1 : 0.6;
+    }
+  });
 
   return (
     <group>
-      {dependencies.map(({ from, to, strength, id, fromNode, toNode }) => {
-        const isHighlighted = 
-          highlightedNode === fromNode.id || 
-          highlightedNode === toNode.id;
-        
-        const isHovered = hoveredLine === id;
-        
-        const lineColor = new Color(isHighlighted ? "#ff4000" : "#4a9eff");
-        const opacity = isHighlighted || isHovered ? 0.8 : 0.2;
-        
-        // Create a curved line
-        const midPoint = new Vector3().addVectors(from, to).multiplyScalar(0.5);
-        const height = from.distanceTo(to) * 0.2;
-        midPoint.y += height;
+      {/* Main connection tube */}
+      <mesh
+        ref={tubeRef}
+        geometry={tubeGeometry}
+        onPointerOver={() => {
+          setHovered(true);
+          onHover?.(true);
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          onHover?.(false);
+        }}
+      >
+        <primitive object={material} ref={materialRef} attach="material" />
+      </mesh>
 
-        const points = [];
-        const curve = new QuadraticBezierCurve3(from, midPoint, to);
-        const numPoints = 50;
-        
-        for (let i = 0; i <= numPoints; i++) {
-          points.push(curve.getPoint(i / numPoints));
-        }
+      {/* Bidirectional indicator */}
+      {isBidirectional && (
+        <mesh position={middlePoint}>
+          <sphereGeometry args={[0.08, 16, 16]} />
+          <meshBasicMaterial
+            color="#00ff00"
+            transparent
+            opacity={0.8}
+          />
+        </mesh>
+      )}
 
-        return (
-          <group key={id}>
-            <Line
-              points={points}
-              color={lineColor}
-              linewidth={isHighlighted || isHovered ? 2 : 1}
-              transparent
-              opacity={opacity}
-              onPointerOver={() => setHoveredLine(id)}
-              onPointerOut={() => setHoveredLine(null)}
-            />
-            {/* Add small spheres at curve points for better visibility */}
-            {[0.25, 0.5, 0.75].map((t, i) => (
-              <Sphere key={i} position={curve.getPoint(t)} args={[0.02]}>
-                <meshBasicMaterial
-                  color={lineColor}
-                  transparent
-                  opacity={opacity}
-                />
-              </Sphere>
-            ))}
-            {isHovered && (
-              <Html position={midPoint.toArray()}>
-                <div className="bg-background/90 backdrop-blur-sm rounded px-2 py-1 text-xs">
-                  {fromNode.name} → {toNode.name}
-                </div>
-              </Html>
+      {/* Information tooltip */}
+      {(isHovered || isHighlighted) && (
+        <Html position={middlePoint}>
+          <div className="bg-black/80 text-white px-2 py-1 rounded text-sm whitespace-nowrap">
+            {isCircularDependency ? (
+              <span className="text-red-400">Circular Dependency Warning!</span>
+            ) : (
+              <>
+                <div>{isBidirectional ? 'Bidirectional' : 'One-way'} Import</div>
+                <div className="text-xs opacity-75">Type: {importType}</div>
+              </>
             )}
-          </group>
-        );
-      })}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }

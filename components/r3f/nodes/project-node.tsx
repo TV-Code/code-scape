@@ -1,22 +1,65 @@
 "use client";
 
-import { useRef, useMemo } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Text, Html } from "@react-three/drei";
+import { Text, Dodecahedron, Sphere, Torus, Box, Octahedron } from "@react-three/drei";
 import { Mesh, Group, Color, Vector3 } from "three";
-import { FileNode } from "@/lib/project-analyzer";
+import { FileNode } from "@/lib/analyzers/project-analyzer";
 
-// Enhanced color palette with neon effects
-const CATEGORY_COLORS = {
-  component: "#00ffff",  // Cyan
-  page: "#ff00ff",      // Magenta
-  layout: "#00ff88",    // Neon green
-  hook: "#ff3366",      // Neon pink
-  util: "#ffff00",      // Yellow
-  style: "#ff00aa",     // Hot pink
-  config: "#88ffff",    // Light cyan
-  test: "#00ff00",      // Bright green
-  other: "#aaaaff"      // Light purple
+// Color schemes with meaning
+const NODE_COLORS = {
+  component: {
+    primary: "#00ffdd",    // Cyan for React components
+    accent: "#008877"
+  },
+  page: {
+    primary: "#ff00ff",    // Magenta for pages
+    accent: "#880088"
+  },
+  layout: {
+    primary: "#4d4dff",    // Blue for layouts
+    accent: "#0000aa"
+  },
+  hook: {
+    primary: "#00ff00",    // Green for hooks
+    accent: "#008800"
+  },
+  context: {
+    primary: "#ffcc00",    // Gold for context
+    accent: "#aa8800"
+  },
+  api: {
+    primary: "#ff4500",    // Orange-Red for API
+    accent: "#aa2200"
+  },
+  style: {
+    primary: "#ff1493",    // Pink for styles
+    accent: "#aa0066"
+  },
+  util: {
+    primary: "#ffff00",    // Yellow for utilities
+    accent: "#aaaa00"
+  },
+  types: {
+    primary: "#dda0dd",    // Plum for types
+    accent: "#996699"
+  },
+  test: {
+    primary: "#98fb98",    // Pale green for tests
+    accent: "#559955"
+  },
+  config: {
+    primary: "#c0c0c0",    // Silver for config
+    accent: "#808080"
+  },
+  directory: {
+    primary: "#4a9eff",    // Blue for directories
+    accent: "#2a5999"
+  },
+  other: {
+    primary: "#808080",    // Gray for others
+    accent: "#404040"
+  }
 };
 
 interface ProjectNodeProps {
@@ -27,14 +70,41 @@ interface ProjectNodeProps {
   isSelected?: boolean;
   onClick?: () => void;
   onHover?: (hovering: boolean) => void;
+  dependencies?: number;
+  dependents?: number;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+function getNodeGeometry(node: FileNode, importCount: number = 0) {
+  const scale = 1 + Math.min(importCount * 0.1, 1);
+  
+  switch (node.category) {
+    case "component":
+      return (
+        <group>
+          <Octahedron args={[scale]}>
+            <meshStandardMaterial wireframe />
+          </Octahedron>
+          <Sphere args={[scale * 0.8, 16, 16]} />
+        </group>
+      );
+    case "page":
+      return (
+        <group>
+          <Box args={[scale * 1.5, scale * 1.5, scale * 0.2]} />
+          <Box args={[scale * 1.2, scale * 1.2, scale * 0.1]} position={[0, 0, 0.2]} />
+        </group>
+      );
+    case "hook":
+      return <Torus args={[scale * 0.8, scale * 0.2, 16, 32]} rotation={[Math.PI / 2, 0, 0]} />;
+    case "directory":
+      return <Box args={[scale * 1.2, scale * 1.2, scale * 1.2]} />;
+    case "api":
+      return <Dodecahedron args={[scale]} />;
+    case "util":
+      return <Sphere args={[scale * 0.8, 32, 32]} />;
+    default:
+      return <Sphere args={[scale * 0.8, 16, 16]} />;
+  }
 }
 
 export function ProjectNode({
@@ -44,53 +114,41 @@ export function ProjectNode({
   isHovered,
   isSelected,
   onClick,
-  onHover
+  onHover,
+  dependencies = 0,
+  dependents = 0
 }: ProjectNodeProps) {
   const meshRef = useRef<Mesh>(null);
   const groupRef = useRef<Group>(null);
-  const glowRef = useRef<Mesh>(null);
 
-  // Calculate node appearance based on type and size
-  const size = node.type === "directory" ? 
-    1 + Math.min(node.children?.length || 0, 5) * 0.2 : 
-    0.8;
+  const colors = NODE_COLORS[node.category] || NODE_COLORS.other;
+  const totalConnections = dependencies + dependents;
+  const importance = Math.log(totalConnections + 1) * 0.2;
 
-  const baseColor = node.type === "directory" ? 
-    "#4a9eff" : 
-    CATEGORY_COLORS[node.category] || CATEGORY_COLORS.other;
+  // Material properties
+  const material = useMemo(() => ({
+    color: new Color(colors.primary),
+    emissive: new Color(colors.accent),
+    emissiveIntensity: isHovered || isSelected ? 0.5 : 0.2,
+    metalness: 0.8,
+    roughness: 0.2,
+    transparent: true,
+    opacity: isHovered || isSelected ? 1 : 0.8,
+  }), [colors, isHovered, isSelected]);
 
-  // Create glow geometry
-  const glowGeometry = useMemo(() => {
-    if (node.type === "directory") {
-      return <octahedronGeometry args={[1.2]} />;
-    }
-    return <boxGeometry args={[1.2, 1.2, 1.2]} />;
-  }, [node.type]);
+  useFrame((state) => {
+    if (!meshRef.current || !groupRef.current) return;
 
-  // Animate on hover/select with more complex movement
-  useFrame((state, delta) => {
-    if (!meshRef.current || !glowRef.current) return;
-
-    // Base floating animation
+    // Gentle floating based on importance
     const time = state.clock.getElapsedTime();
-    const floatY = Math.sin(time * 2) * 0.1;
-    
-    meshRef.current.position.y = floatY;
-    glowRef.current.position.y = floatY;
+    const floatHeight = 0.2 + importance;
+    groupRef.current.position.y = position[1] + Math.sin(time + position[0]) * floatHeight;
 
-    // Rotation animation on hover/select
+    // Rotation
     if (isHovered || isSelected) {
-      meshRef.current.rotation.y += delta * 0.5;
-      glowRef.current.rotation.y += delta * 0.5;
-      
-      // Pulse effect
-      const pulse = Math.sin(time * 4) * 0.1 + 1;
-      meshRef.current.scale.setScalar(pulse * (isHovered ? 1.1 : 1) * size * scale);
-      glowRef.current.scale.setScalar(pulse * 1.2 * (isHovered ? 1.15 : 1.05) * size * scale);
+      meshRef.current.rotation.y += 0.02;
     } else {
-      // Gentle rotation when idle
-      meshRef.current.rotation.y += delta * 0.1;
-      glowRef.current.rotation.y += delta * 0.1;
+      meshRef.current.rotation.y += 0.001 * (1 + importance);
     }
   });
 
@@ -111,80 +169,35 @@ export function ProjectNode({
         onHover?.(false);
       }}
     >
-      {/* Outer glow */}
-      <mesh
-        ref={glowRef}
-        scale={size * scale * 1.2}
-      >
-        {glowGeometry}
-        <meshPhysicalMaterial
-          color={baseColor}
-          transparent
-          opacity={0.3}
-          roughness={1}
-          metalness={0}
-          emissive={new Color(baseColor)}
-          emissiveIntensity={isHovered || isSelected ? 2 : 0.5}
-        />
+      <mesh ref={meshRef} scale={isHovered || isSelected ? scale * 1.1 : scale}>
+        {getNodeGeometry(node, totalConnections)}
+        <meshPhysicalMaterial {...material} />
       </mesh>
 
-      {/* Main node geometry */}
-      <mesh
-        ref={meshRef}
-        scale={size * scale}
-      >
-        {node.type === "directory" ? (
-          <octahedronGeometry args={[1]} />
-        ) : (
-          <boxGeometry args={[1, 1, 1]} />
-        )}
-        <meshPhysicalMaterial
-          color={baseColor}
-          transparent
-          opacity={0.9}
-          roughness={0.3}
-          metalness={0.8}
-          emissive={new Color(baseColor)}
-          emissiveIntensity={isHovered || isSelected ? 1 : 0.2}
-        />
-      </mesh>
-
-      {/* Enhanced text label */}
       <Text
-        position={[0, size + 0.5, 0]}
+        position={[0, 1.2, 0]}
         fontSize={0.4}
-        color={isHovered || isSelected ? baseColor : "white"}
+        color={colors.primary}
         anchorX="center"
         anchorY="middle"
-        outlineWidth={0.04}
+        outlineWidth={0.05}
         outlineColor="#000000"
       >
         {node.name}
       </Text>
 
-      {/* Enhanced info panel */}
       {(isHovered || isSelected) && (
-        <Html position={[size + 1, 0, 0]}>
-          <div className="bg-background/90 backdrop-blur-sm rounded-lg p-3 min-w-[220px] shadow-xl border border-border">
-            <div className="text-sm font-medium" style={{ color: baseColor }}>{node.name}</div>
-            <div className="text-xs text-muted-foreground mt-2 space-y-1">
-              <div className="flex justify-between">
-                <span>Type:</span>
-                <span className="font-medium">{node.type}</span>
-              </div>
-              {node.type === 'directory' && (
-                <div className="flex justify-between">
-                  <span>Children:</span>
-                  <span className="font-medium">{node.children?.length || 0}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span>Size:</span>
-                <span className="font-medium">{formatBytes(node.size)}</span>
-              </div>
-            </div>
-          </div>
-        </Html>
+        <>
+          <Text
+            position={[0, -1.2, 0]}
+            fontSize={0.3}
+            color={colors.accent}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {`Deps: ${dependencies} | Used by: ${dependents}`}
+          </Text>
+        </>
       )}
     </group>
   );

@@ -46,6 +46,7 @@
     "@radix-ui/react-tooltip": "^1.0.7",
     "@react-three/drei": "9.97.0",
     "@react-three/fiber": "^8.17.10",
+    "@react-three/postprocessing": "^2.16.3",
     "@reduxjs/toolkit": "2.2.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
@@ -66,7 +67,8 @@
     "tailwind-merge": "2.2.1",
     "tailwindcss-animate": "1.0.7",
     "three": "0.161.0",
-    "three-mesh-bvh": "0.8.0"
+    "three-mesh-bvh": "0.8.0",
+    "three-stdlib": "^2.34.0"
   },
   "devDependencies": {
     "@eslint/config-array": "0.17.1",

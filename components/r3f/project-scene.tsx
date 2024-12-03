@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState, useEffect, useMemo, useCallback } from "react";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { useRef, useState, useEffect, useMemo } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, Stars } from "@react-three/drei";
 import { FileNode } from "@/lib/analyzers/project-analyzer";
 import { ProjectNode } from "./nodes/project-node";
 import { DependencyLines } from "./nodes/dependency-lines";
@@ -19,91 +19,142 @@ function Scene({ projectData, onNodeSelect }: ProjectSceneProps) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [nodePositions, setNodePositions] = useState(new Map<string, [number, number, number]>());
   const layoutRef = useRef<ForceGraphLayout>(new ForceGraphLayout());
-  const processingRef = useRef(false);
+  const { camera } = useThree();
+  const cameraTargetRef = useRef(new Vector3());
+  const lastUpdateTime = useRef(Date.now());
 
-  // Calculate initial node positions only once
-  const initialNodePositions = useMemo(() => {
-    const positions = new Map<string, [number, number, number]>();
-
-    function processNode(node: FileNode, level: number = 0, angle: number = 0) {
-      const radius = 5 + level * 3;
-      const position: [number, number, number] = [
-        Math.cos(angle) * radius,
-        -level * 2,
-        Math.sin(angle) * radius
-      ];
-      positions.set(node.id, position);
-
-      if (node.children) {
-        const angleStep = (2 * Math.PI) / node.children.length;
-        node.children.forEach((child, index) => {
-          processNode(child, level + 1, angle + index * angleStep);
+  // Process the project structure into nodes and links
+  const { nodes, links } = useMemo(() => {
+    const nodes: Array<{ id: string; node: FileNode }> = [];
+    const links: Array<{ source: string; target: string; type: string }> = [];
+    
+    function processNode(node: FileNode) {
+      nodes.push({ id: node.id, node });
+      
+      // Add imports as links
+      if (node.imports?.length) {
+        node.imports.forEach(importPath => {
+          links.push({ source: node.id, target: importPath, type: 'import' });
         });
       }
-    }
 
-    processNode(projectData);
-    return positions;
-  }, [projectData]);
-
-  // Initialize positions once
-  useEffect(() => {
-    if (!processingRef.current) {
-      processingRef.current = true;
-      setNodePositions(initialNodePositions);
-    }
-  }, [initialNodePositions]);
-
-  // Create node objects for rendering
-  const nodes = useMemo(() => {
-    const nodesMap = new Map<string, { node: FileNode; position: [number, number, number] }>();
-
-    function processNode(node: FileNode) {
-      const position = nodePositions.get(node.id);
-      if (position) {
-        nodesMap.set(node.id, { node, position });
-      }
       node.children?.forEach(processNode);
     }
-
+    
     processNode(projectData);
-    return Array.from(nodesMap.values());
-  }, [projectData, nodePositions]);
+    return { nodes, links };
+  }, [projectData]);
 
-  const handleNodeClick = useCallback((node: FileNode) => {
-    setSelectedNode(node.id);
-    onNodeSelect?.(node);
-  }, [onNodeSelect]);
+  // Calculate initial node positions in a spherical layout
+  useEffect(() => {
+    const newPositions = new Map<string, [number, number, number]>();
+    const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle
+    
+    nodes.forEach(({ id }, i) => {
+      const y = 1 - (i / (nodes.length - 1)) * 2; // -1 to 1
+      const radius = Math.sqrt(1 - y * y);
+      const theta = phi * i; // Golden angle increment
 
-  const handleNodeHover = useCallback((nodeId: string, hovering: boolean) => {
-    setHoveredNode(hovering ? nodeId : null);
-  }, []);
+      const x = radius * Math.cos(theta) * 20;
+      const z = radius * Math.sin(theta) * 20;
+      newPositions.set(id, [x, y * 20, z]);
+    });
+
+    setNodePositions(newPositions);
+  }, [nodes]);
+
+  // Smooth camera behavior
+  useFrame((state, delta) => {
+    if (hoveredNode || selectedNode) {
+      const targetNode = hoveredNode || selectedNode;
+      const nodePos = nodePositions.get(targetNode);
+      
+      if (nodePos && Date.now() - lastUpdateTime.current > 100) {
+        const targetPosition = new Vector3(...nodePos).add(new Vector3(5, 2, 5));
+        const targetLookAt = new Vector3(...nodePos);
+        
+        // Smooth camera movement
+        camera.position.lerp(targetPosition, delta * 2);
+        cameraTargetRef.current.lerp(targetLookAt, delta * 2);
+        camera.lookAt(cameraTargetRef.current);
+        
+        lastUpdateTime.current = Date.now();
+      }
+    }
+  });
 
   return (
-    <group>
-      <ambientLight intensity={0.6} />
-      <pointLight position={[10, 10, 10]} intensity={0.8} />
-      <pointLight position={[-10, -10, -10]} intensity={0.4} />
+    <>
+      <color attach="background" args={['#0a0a0a']} />
+      <Stars 
+        radius={100} 
+        depth={50} 
+        count={5000} 
+        factor={4} 
+        saturation={0} 
+        fade 
+        speed={1} 
+      />
+      
+      {/* Lighting */}
+      <ambientLight intensity={0.2} />
+      <pointLight position={[10, 10, 10]} intensity={0.5} color="#00ffff" />
+      <pointLight position={[-10, -10, -10]} intensity={0.5} color="#ff00ff" />
+      <pointLight position={[0, 20, 0]} intensity={0.8} color="#ffffff" />
 
-      {nodes.map(({ node, position }) => (
-        <ProjectNode
-          key={node.id}
-          node={node}
-          position={position}
-          isHovered={hoveredNode === node.id}
-          isSelected={selectedNode === node.id}
-          onClick={() => handleNodeClick(node)}
-          onHover={(hovering) => handleNodeHover(node.id, hovering)}
-        />
-      ))}
+      {/* Dependency Lines */}
+      {links.map((link, index) => {
+        const startPos = nodePositions.get(link.source);
+        const endPos = nodePositions.get(link.target);
+        
+        if (startPos && endPos) {
+          return (
+            <DependencyLines
+              key={`${link.source}-${link.target}-${index}`}
+              start={new Vector3(...startPos)}
+              end={new Vector3(...endPos)}
+              isHighlighted={
+                hoveredNode === link.source || 
+                hoveredNode === link.target ||
+                selectedNode === link.source ||
+                selectedNode === link.target
+              }
+            />
+          );
+        }
+        return null;
+      })}
 
+      {/* Project Nodes */}
+      {nodes.map(({ id, node }) => {
+        const position = nodePositions.get(id);
+        if (!position) return null;
+
+        return (
+          <ProjectNode
+            key={id}
+            node={node}
+            position={position}
+            isHovered={hoveredNode === id}
+            isSelected={selectedNode === id}
+            onClick={() => {
+              setSelectedNode(prev => prev === id ? null : id);
+              onNodeSelect?.(node);
+            }}
+            onHover={(hovering) => setHoveredNode(hovering ? id : null)}
+          />
+        );
+      })}
+      {/* Camera Controls */}
       <OrbitControls
+        makeDefault
         enableDamping
         dampingFactor={0.05}
         maxDistance={100}
         minDistance={5}
+        maxPolarAngle={Math.PI * 0.8}
       />
-    </group>
+    </>
   );
 }
 
@@ -112,9 +163,17 @@ export function ProjectScene(props: ProjectSceneProps) {
     <div className="w-full h-full">
       <Canvas
         shadows
-        gl={{ antialias: true }}
-        camera={{ position: [0, 0, 40], fov: 50 }}
-        style={{ background: '#0a0a0a' }}
+        gl={{ 
+          antialias: true,
+          alpha: true,
+          logarithmicDepthBuffer: true
+        }}
+        camera={{ 
+          position: [0, 0, 40],
+          fov: 50,
+          near: 0.1,
+          far: 1000
+        }}
       >
         <Scene {...props} />
       </Canvas>
