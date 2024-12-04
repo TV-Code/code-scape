@@ -1,5 +1,6 @@
-import { useRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+'use client';
+
+import { useMemo } from 'react';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -7,7 +8,6 @@ interface ConnectionLinesProps {
   start: THREE.Vector3;
   end: THREE.Vector3;
   type: 'import' | 'child' | 'dependency';
-  strength?: number;
   isHighlighted?: boolean;
 }
 
@@ -15,70 +15,73 @@ export function ConnectionLines({
   start,
   end,
   type,
-  strength = 1,
-  isHighlighted = false,
+  isHighlighted = false
 }: ConnectionLinesProps) {
-  const lineRef = useRef<THREE.Line>();
-
-  // Generate curve path based on connection type
-  const { curve, width, color, dashed, dashScale, dashSize, gapSize } = useMemo(() => {
+  // Generate curve points
+  const points = useMemo(() => {
     const distance = start.distanceTo(end);
     const midPoint = start.clone().add(end).multiplyScalar(0.5);
     let controlPoint;
 
     switch (type) {
       case 'child':
+        // Simple elegant arc for parent-child
         midPoint.y += distance * 0.15;
         controlPoint = midPoint;
         break;
       case 'import':
+        // Wider curve for imports
         midPoint.y += distance * 0.3;
         const perpendicular = new THREE.Vector3()
           .subVectors(end, start)
           .cross(new THREE.Vector3(0, 1, 0))
           .normalize();
-        controlPoint = midPoint.clone().add(perpendicular.multiplyScalar(distance * 0.2));
+        controlPoint = midPoint.clone().add(
+          perpendicular.multiplyScalar(distance * 0.2)
+        );
         break;
       default:
+        // Subtle curve for dependencies
         midPoint.y += distance * 0.1;
         controlPoint = midPoint;
     }
 
-    const curvePoints = new THREE.CatmullRomCurve3([start, controlPoint, end]).getPoints(50);
+    // Create smooth curve
+    const curve = new THREE.QuadraticBezierCurve3(
+      start,
+      controlPoint,
+      end
+    );
 
-    return {
-      curve: curvePoints,
-      width: type === 'child' ? 2 : 1,
-      color: type === 'child' ? '#4a90e2' : '#ffd700',
-      dashed: type === 'import',
-      dashScale: 1,
-      dashSize: 1,
-      gapSize: 1,
-    };
+    return curve.getPoints(50);
   }, [start, end, type]);
 
-  // Animated dash offset
-  useFrame((state) => {
-    if (lineRef.current && (type === 'import' || isHighlighted)) {
-      const material = lineRef.current.material as THREE.LineDashedMaterial;
-      material.dashOffset -= 0.01;
-    }
-  });
+  // Style based on connection type
+  const lineStyle = useMemo(() => {
+    const styles = {
+      child: {
+        color: '#2196f3',  // Bright blue
+        lineWidth: 3
+      },
+      import: {
+        color: '#ff9800',  // Orange
+        lineWidth: 2
+      },
+      dependency: {
+        color: '#4caf50',  // Green
+        lineWidth: 2
+      }
+    };
+
+    return styles[type];
+  }, [type]);
 
   return (
     <Line
-      ref={lineRef}
-      points={curve}
-      color={color}
-      lineWidth={width}
-      dashed={dashed}
-      dashScale={dashScale}
-      dashSize={dashSize}
-      gapSize={gapSize}
-      opacity={isHighlighted ? 0.8 : 0.4}
-      transparent
-      depthTest={false}
-      blending={THREE.AdditiveBlending}
+      points={points}
+      color={lineStyle.color}
+      lineWidth={lineStyle.lineWidth}
+      dashed={false}
     />
   );
 }

@@ -70,7 +70,8 @@
     "tailwindcss-animate": "1.0.7",
     "three": "0.161.0",
     "three-mesh-bvh": "0.8.0",
-    "three-stdlib": "^2.34.0"
+    "three-stdlib": "^2.34.0",
+    "three.meshline": "^1.4.0"
   },
   "devDependencies": {
     "@eslint/config-array": "0.17.1",
@@ -89,13 +90,5 @@
     "rimraf": "^5.0.5",
     "tailwindcss": "3.4.1",
     "typescript": "^5.3.3"
-  },
-  "peerDependencies": {
-    "react": "18.2.0",
-    "react-dom": "18.2.0"
-  },
-  "resolutions": {
-    "three": "0.161.0",
-    "three-mesh-bvh": "0.8.3"
   }
 }
