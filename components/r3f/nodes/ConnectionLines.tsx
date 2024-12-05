@@ -1,87 +1,63 @@
 'use client';
 
-import { useMemo } from 'react';
-import { Line } from '@react-three/drei';
 import * as THREE from 'three';
+import { useRef } from 'react';
+import { LineBasicMaterial, Line2 } from 'three/examples/jsm/lines/Line2';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 
 interface ConnectionLinesProps {
   start: THREE.Vector3;
   end: THREE.Vector3;
-  type: 'import' | 'child' | 'dependency';
-  isHighlighted?: boolean;
 }
 
-export function ConnectionLines({
-  start,
-  end,
-  type,
-  isHighlighted = false
-}: ConnectionLinesProps) {
-  // Generate curve points
-  const points = useMemo(() => {
-    const distance = start.distanceTo(end);
-    const midPoint = start.clone().add(end).multiplyScalar(0.5);
-    let controlPoint;
+export function ConnectionLines({ start, end }: ConnectionLinesProps) {
+  const lineRef = useRef<any>();
 
-    switch (type) {
-      case 'child':
-        // Simple elegant arc for parent-child
-        midPoint.y += distance * 0.15;
-        controlPoint = midPoint;
-        break;
-      case 'import':
-        // Wider curve for imports
-        midPoint.y += distance * 0.3;
-        const perpendicular = new THREE.Vector3()
-          .subVectors(end, start)
-          .cross(new THREE.Vector3(0, 1, 0))
-          .normalize();
-        controlPoint = midPoint.clone().add(
-          perpendicular.multiplyScalar(distance * 0.2)
-        );
-        break;
-      default:
-        // Subtle curve for dependencies
-        midPoint.y += distance * 0.1;
-        controlPoint = midPoint;
-    }
+  // Create a curved path between points
+  const midPoint = start.clone().add(end).multiplyScalar(0.5);
+  const distance = start.distanceTo(end);
+  midPoint.y += distance * 0.2;
 
-    // Create smooth curve
-    const curve = new THREE.QuadraticBezierCurve3(
-      start,
-      controlPoint,
-      end
-    );
+  const curve = new THREE.QuadraticBezierCurve3(
+    start,
+    midPoint,
+    end
+  );
 
-    return curve.getPoints(50);
-  }, [start, end, type]);
-
-  // Style based on connection type
-  const lineStyle = useMemo(() => {
-    const styles = {
-      child: {
-        color: '#2196f3',  // Bright blue
-        lineWidth: 3
-      },
-      import: {
-        color: '#ff9800',  // Orange
-        lineWidth: 2
-      },
-      dependency: {
-        color: '#4caf50',  // Green
-        lineWidth: 2
-      }
-    };
-
-    return styles[type];
-  }, [type]);
+  // Get points along the curve
+  const points = curve.getPoints(50);
+  const positions = points.flatMap(p => [p.x, p.y, p.z]);
 
   return (
-    <Line
-      points={points}
-      color={lineStyle.color}
-      lineWidth={lineStyle.lineWidth}
-      dashed={false}
-    />
+    <group>
+      {/* Debug points */}
+      <mesh position={start}>
+        <sphereGeometry args={[0.2, 8, 8]} />
+        <meshBasicMaterial color="yellow" />
+      </mesh>
+      <mesh position={end}>
+        <sphereGeometry args={[0.2, 8, 8]} />
+        <meshBasicMaterial color="green" />
+      </mesh>
+
+      {/* The actual line */}
+      <line>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={positions.length / 3}
+            array={new Float32Array(positions)}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
+          color="#4a90e2"
+          linewidth={1}
+          transparent
+          opacity={0.6}
+        />
+      </line>
+    </group>
   );
 }
