@@ -17,25 +17,88 @@ interface FileConnection {
 }
 
 function cleanPath(path: string): string {
-    // Extract path after src/
-    const match = path.match(/\/src\/(.+?)(?:\.(tsx?|jsx?))?$/);
-    return match ? match[1] : path;
+    // Remove any file extension
+    path = path.replace(/\.(tsx?|jsx?|js|mjs|cjs)$/, '');
+    
+    // Handle absolute paths
+    if (path.startsWith('/')) {
+        path = path.slice(1);
+    }
+
+    // Handle different project structures
+    const possibleRoots = ['src', 'app', 'lib', 'source', 'packages'];
+    for (const root of possibleRoots) {
+        const rootIndex = path.indexOf(`/${root}/`);
+        if (rootIndex !== -1) {
+            return path.slice(rootIndex + root.length + 2);
+        }
+    }
+
+    // If no root folder found, just use the path after removing potential temp directories
+    const parts = path.split('/');
+    const cleanedParts = parts.filter(part => 
+        !part.startsWith('.') && 
+        !part.startsWith('tmp') && 
+        !part.includes('codescape-') &&
+        part !== 'node_modules'
+    );
+
+    return cleanedParts.join('/');
 }
 
-function findMatchingNode(nodes: Map<string, FileNode>, importPath: string): FileNode | undefined {
-    // Clean up the import path
+function findMatchingNode(nodes: Map<string, FileNode>, importPath: string, sourceFile: FileNode): FileNode | undefined {
     const cleanImport = cleanPath(importPath);
     console.log('Looking for:', cleanImport);
+    console.log('From source:', cleanPath(sourceFile.path));
 
+    // Try exact match first
     for (const node of nodes.values()) {
         const nodePath = cleanPath(node.path);
-        console.log('Checking against:', nodePath);
-
         if (nodePath === cleanImport) {
+            console.log('Found exact match:', nodePath);
             return node;
         }
     }
 
+    // Try relative path resolution
+    if (importPath.startsWith('.')) {
+        const sourceDir = sourceFile.path.split('/').slice(0, -1).join('/');
+        const absolutePath = cleanPath(sourceDir + '/' + importPath.replace(/^\.\//, ''));
+        for (const node of nodes.values()) {
+            const nodePath = cleanPath(node.path);
+            if (nodePath === absolutePath) {
+                console.log('Found relative match:', nodePath);
+                return node;
+            }
+        }
+    }
+
+    // Try more flexible matches
+    for (const node of nodes.values()) {
+        const nodePath = cleanPath(node.path);
+        const nodePathParts = nodePath.split('/');
+        const importParts = cleanImport.split('/');
+
+        // Match by file/folder name
+        if (nodePathParts[nodePathParts.length - 1] === importParts[importParts.length - 1]) {
+            console.log('Found name match:', nodePath);
+            return node;
+        }
+
+        // Handle index files
+        if (nodePath.includes(cleanImport + '/index')) {
+            console.log('Found index match:', nodePath);
+            return node;
+        }
+
+        // Handle directory imports
+        if (nodePath.startsWith(cleanImport + '/')) {
+            console.log('Found directory match:', nodePath);
+            return node;
+        }
+    }
+
+    console.log('No match found for:', cleanImport);
     return undefined;
 }
 
@@ -54,25 +117,28 @@ function Scene({ projectData, onNodeSelect }: { projectData: FileNode; onNodeSel
 
         function processNode(node: FileNode) {
             if (node.type === 'directory') {
-                if (node.path.includes('/src/')) {
+                // Include directories that look like source code folders
+                if (!node.path.includes('node_modules') && 
+                    !node.path.includes('.git') && 
+                    !node.path.startsWith('.')) {
                     folderNodes.set(node.id, node);
                 }
                 node.children?.forEach(processNode);
             } else if (node.type === 'file' && 
-                      (node.path.endsWith('.tsx') || node.path.endsWith('.ts')) &&
-                      node.path.includes('/src/')) {
+                      /\.(tsx?|jsx?|js|mjs|cjs)$/.test(node.path) &&
+                      !node.path.includes('node_modules')) {
                 fileNodes.set(node.id, {
                     ...node,
-                    // Remove the base path from imports
                     imports: node.imports?.map(imp => {
+                        // Clean import paths
                         const cleanedImport = cleanPath(imp);
-                        console.log('Clean import:', cleanedImport);
+                        console.log(`Cleaned import path ${imp} -> ${cleanedImport}`);
                         return cleanedImport;
                     })
                 });
-                console.log('File:', cleanPath(node.path));
+                console.log('Processing file:', cleanPath(node.path));
                 if (node.imports?.length) {
-                    console.log('Imports:', node.imports);
+                    console.log('With imports:', node.imports);
                 }
             }
         }
@@ -104,7 +170,7 @@ function Scene({ projectData, onNodeSelect }: { projectData: FileNode; onNodeSel
             if (!sourcePos) return;
 
             sourceFile.imports.forEach(importPath => {
-                const targetFile = findMatchingNode(files, importPath);
+                const targetFile = findMatchingNode(files, importPath, sourceFile);
                 if (!targetFile) {
                     console.log('No match found for import:', importPath, 'from', cleanPath(sourceFile.path));
                     return;
@@ -123,14 +189,15 @@ function Scene({ projectData, onNodeSelect }: { projectData: FileNode; onNodeSel
                     cleanPath(targetFile.path)
                 );
 
-                // Create the connection curve
                 const start = new THREE.Vector3(...sourcePos);
                 const end = new THREE.Vector3(...targetPos);
-                const mid = start.clone().add(end).multiplyScalar(0.5);
-                const dist = start.distanceTo(end);
-                mid.y += dist * 0.2;
 
-                const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+                // Calculate midpoint with upward curve
+                const midPoint = start.clone().add(end).multiplyScalar(0.5);
+                const dist = start.distanceTo(end);
+                midPoint.y += dist * 0.2;
+
+                const curve = new THREE.QuadraticBezierCurve3(start, midPoint, end);
                 newConnections.push({
                     points: curve.getPoints(20),
                     type: 'import'
@@ -226,7 +293,7 @@ export function ProjectScene(props: { projectData: FileNode; onNodeSelect?: (nod
                     makeDefault
                     enableDamping
                     dampingFactor={0.05}
-                    maxDistance={300}
+                    maxDistance={150}
                     minDistance={5}
                 />
             </Canvas>
