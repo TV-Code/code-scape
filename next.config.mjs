@@ -1,14 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  experimental: {
-    appDir: true,
-  },
-  webpack: (config) => {
-    // Ensure three.js and related packages are handled correctly
-    config.externals = [...(config.externals || []), { canvas: 'canvas' }];
-    return config;
-  },
+    env: {
+        NEXT_PUBLIC_ANTHROPIC_API_KEY: process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY,
+    },
+    reactStrictMode: true,
 }
 
 export default nextConfig;
